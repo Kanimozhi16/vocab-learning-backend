@@ -47,24 +47,62 @@ app.post('/infer', (req, res) => {
 });
 
 // Socket.IO connection event
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
+require("dotenv").config();
+const { HfInference } = require("@huggingface/inference-api");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
+
+const HF_TOKEN = process.env.HF_API_KEY;
+const hf = new HfInference(HF_TOKEN);
+
+app.use(cors());
+app.use(express.json());
+
+let leaderboard = {}; // Store player scores
+
+// AI-generated vocabulary question
+app.get("/generate-question", async (req, res) => {
+  try {
+    const response = await hf.textGeneration({
+      model: "facebook/bart-large-mnli",
+      inputs: "Create a vocabulary quiz question for college students.",
+      parameters: { max_length: 50 },
+    });
+    res.json({ question: response.generated_text });
+  } catch (error) {
+    res.status(500).json({ error: "AI failed to generate a question" });
+  }
+});
+
+// Real-time communication
 io.on("connection", (socket) => {
-  console.log("A user connected");
+  console.log("User connected:", socket.id);
 
-  // Example of emitting an event to the client
-  socket.emit("message", "Hello from server!");
+  // Send updated leaderboard
+  socket.emit("update_leaderboard", leaderboard);
 
-  // Handle any event from the client
+  // Handle player answers
+  socket.on("send_answer", (data) => {
+    const { user, answer, correct } = data;
+
+    if (correct) {
+      leaderboard[user] = (leaderboard[user] || 0) + 10; // +10 points for correct answer
+    } else {
+      leaderboard[user] = (leaderboard[user] || 0) + 0; // No points for wrong answers
+    }
+
+    io.emit("update_leaderboard", leaderboard); // Send updated leaderboard to all
+  });
+
   socket.on("disconnect", () => {
-    console.log("A user disconnected");
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// Start the HTTP server (use this instead of app.listen)
-server.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
-});
-
-
-
-
-
+server.listen(5000, () => console.log("Server running on port 5000"));
